@@ -115,7 +115,7 @@ fun freePort(): Int = freePortCounter.getAndAccumulate(0) { prev, _ -> 30000 + (
  */
 fun getFreeLocalPorts(hostName: String, numberToAlloc: Int): List<NetworkHostAndPort> {
     val freePort = freePortCounter.getAndAccumulate(0) { prev, _ -> 30000 + (prev - 30000 + numberToAlloc) % 10000 }
-    return (freePort..freePort + numberToAlloc - 1).map { NetworkHostAndPort(hostName, it) }
+    return (freePort until freePort + numberToAlloc).map { NetworkHostAndPort(hostName, it) }
 }
 
 @JvmOverloads
@@ -128,14 +128,14 @@ fun configureTestSSL(legalName: CordaX500Name = MEGA_CORP.name): SSLConfiguratio
         configureDevKeyAndTrustStores(legalName)
     }
 }
+
 fun getTestPartyAndCertificate(party: Party): PartyAndCertificate {
     val trustRoot: X509CertificateHolder = DEV_TRUST_ROOT
     val intermediate: CertificateAndKeyPair = DEV_CA
 
-    val nodeCaName = party.name.copy(commonName = X509Utilities.CORDA_CLIENT_CA_CN)
     val nameConstraints = NameConstraints(arrayOf(GeneralSubtree(GeneralName(GeneralName.directoryName, party.name.x500Name))), arrayOf())
     val issuerKeyPair = Crypto.generateKeyPair(Crypto.ECDSA_SECP256K1_SHA256)
-    val issuerCertificate = X509Utilities.createCertificate(CertificateType.NODE_CA, intermediate.certificate, intermediate.keyPair, nodeCaName, issuerKeyPair.public,
+    val issuerCertificate = X509Utilities.createCertificate(CertificateType.NODE_CA, intermediate.certificate, intermediate.keyPair, party.name, issuerKeyPair.public,
             nameConstraints = nameConstraints)
 
     val certHolder = X509Utilities.createCertificate(CertificateType.WELL_KNOWN_IDENTITY, issuerCertificate, issuerKeyPair, party.name, party.owningKey)

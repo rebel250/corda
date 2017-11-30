@@ -37,11 +37,11 @@ import net.corda.node.services.transactions.BFTSMaRt
 import net.corda.node.services.transactions.InMemoryTransactionVerifierService
 import net.corda.node.utilities.AffinityExecutor
 import net.corda.node.utilities.AffinityExecutor.ServiceAffinityExecutor
-import net.corda.nodeapi.internal.persistence.CordaPersistence
-import net.corda.nodeapi.internal.ServiceIdentityGenerator
-import net.corda.nodeapi.internal.NotaryInfo
-import net.corda.testing.DUMMY_NOTARY
 import net.corda.nodeapi.internal.NetworkParametersCopier
+import net.corda.nodeapi.internal.NotaryInfo
+import net.corda.nodeapi.internal.IdentityGenerator
+import net.corda.nodeapi.internal.persistence.CordaPersistence
+import net.corda.testing.DUMMY_NOTARY
 import net.corda.testing.common.internal.testNetworkParameters
 import net.corda.testing.internal.testThreadFactory
 import net.corda.testing.node.MockServices.Companion.MOCK_VERSION_INFO
@@ -222,19 +222,16 @@ class MockNetwork(defaultParameters: MockNetworkParameters = MockNetworkParamete
     }
 
     private fun generateNotaryIdentities(): List<NotaryInfo> {
-        return notarySpecs.mapIndexed { index, spec ->
-            val identity = ServiceIdentityGenerator.generateToDisk(
-                    dirs = listOf(baseDirectory(nextNodeId + index)),
-                    serviceName = spec.name,
-                    serviceId = "identity")
-            NotaryInfo(identity, spec.validating)
+        return notarySpecs.mapIndexed { index, (name, validating) ->
+            val identity = IdentityGenerator.generateNodeIdentity(baseDirectory(nextNodeId + index), name)
+            NotaryInfo(identity, validating)
         }
     }
 
     private fun createNotaries(): List<StartedNode<MockNode>> {
-        return notarySpecs.map { spec ->
-            createNode(MockNodeParameters(legalName = spec.name, configOverrides = {
-                doReturn(NotaryConfig(spec.validating)).whenever(it).notary
+        return notarySpecs.map { (name, validating) ->
+            createNode(MockNodeParameters(legalName = name, configOverrides = {
+                doReturn(NotaryConfig(validating)).whenever(it).notary
             }))
         }
     }
@@ -291,7 +288,7 @@ class MockNetwork(defaultParameters: MockNetworkParameters = MockNetworkParamete
                     id,
                     serverThread,
                     myNotaryIdentity,
-                    myLegalName,
+                    configuration.myLegalName,
                     database).also { runOnStop += it::stop }
         }
 

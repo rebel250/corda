@@ -32,10 +32,10 @@ import net.corda.node.internal.classloading.requireAnnotation
 import net.corda.node.internal.cordapp.CordappLoader
 import net.corda.node.internal.cordapp.CordappProviderImpl
 import net.corda.node.internal.cordapp.CordappProviderInternal
+import net.corda.node.internal.security.RPCSecurityManager
 import net.corda.node.services.ContractUpgradeHandler
 import net.corda.node.services.FinalityHandler
 import net.corda.node.services.NotaryChangeHandler
-import net.corda.node.internal.security.RPCSecurityManager
 import net.corda.node.services.api.*
 import net.corda.node.services.config.BFTSMaRtConfiguration
 import net.corda.node.services.config.NodeConfiguration
@@ -57,8 +57,12 @@ import net.corda.node.services.vault.NodeVaultService
 import net.corda.node.services.vault.VaultSoftLockManager
 import net.corda.node.shell.InteractiveShell
 import net.corda.node.utilities.AffinityExecutor
+import net.corda.nodeapi.internal.IdentityGenerator
 import net.corda.nodeapi.internal.NetworkParameters
-import net.corda.nodeapi.internal.crypto.*
+import net.corda.nodeapi.internal.crypto.KeyStoreWrapper
+import net.corda.nodeapi.internal.crypto.X509CertificateFactory
+import net.corda.nodeapi.internal.crypto.X509Utilities
+import net.corda.nodeapi.internal.crypto.loadKeyStore
 import net.corda.nodeapi.internal.persistence.CordaPersistence
 import net.corda.nodeapi.internal.persistence.DatabaseConfig
 import net.corda.nodeapi.internal.persistence.HibernateConfiguration
@@ -129,12 +133,12 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
     protected val services: ServiceHubInternal get() = _services
     private lateinit var _services: ServiceHubInternalImpl
     protected var myNotaryIdentity: PartyAndCertificate? = null
-    protected lateinit var checkpointStorage: CheckpointStorage
+    private lateinit var checkpointStorage: CheckpointStorage
     private lateinit var tokenizableServices: List<Any>
     protected lateinit var attachments: NodeAttachmentService
     protected lateinit var network: MessagingService
     protected val runOnStop = ArrayList<() -> Any?>()
-    protected val _nodeReadyFuture = openFuture<Unit>()
+    private val _nodeReadyFuture = openFuture<Unit>()
     protected val networkMapClient: NetworkMapClient? by lazy {
         configuration.compatibilityZoneURL?.let {
             NetworkMapClient(it, services.identityService.trustRoot)
@@ -145,13 +149,7 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
 
     /** Completes once the node has successfully registered with the network map service
      * or has loaded network map data from local database */
-    val nodeReadyFuture: CordaFuture<Unit>
-        get() = _nodeReadyFuture
-    /** A [CordaX500Name] with null common name. */
-    protected val myLegalName: CordaX500Name by lazy {
-        val cert = loadKeyStore(configuration.nodeKeystore, configuration.keyStorePassword).getX509Certificate(X509Utilities.CORDA_CLIENT_CA)
-        CordaX500Name.build(cert.subjectX500Principal).copy(commonName = null)
-    }
+    val nodeReadyFuture: CordaFuture<Unit> get() = _nodeReadyFuture
 
     open val serializationWhitelists: List<SerializationWhitelist> by lazy {
         cordappLoader.cordapps.flatMap { it.serializationWhitelists }
@@ -299,7 +297,7 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
         )
         // Check if we have already stored a version of 'our own' NodeInfo, this is to avoid regenerating it with
         // a different timestamp.
-        networkMapCache.getNodesByLegalName(myLegalName).firstOrNull()?.let {
+        networkMapCache.getNodesByLegalName(configuration.myLegalName).firstOrNull()?.let {
             if (info.copy(serial = it.serial) == it) {
                 info = it
             }
@@ -699,13 +697,10 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
 
         val (id, singleName) = if (notaryConfig == null || !notaryConfig.isClusterConfig) {
             // Node's main identity or if it's a single node notary
-            Pair("identity", myLegalName)
+            Pair(IdentityGenerator.NODE_IDENTITY_ALIAS_PREFIX, configuration.myLegalName)
         } else {
-            val notaryId = notaryConfig.run {
-                NotaryService.constructId(validating, raft != null, bftSMaRt != null, custom)
-            }
             // The node is part of a distributed notary whose identity must already be generated beforehand.
-            Pair(notaryId, null)
+            Pair(IdentityGenerator.DISTRIBUTED_NOTARY_ALIAS_PREFIX, null)
         }
         // TODO: Integrate with Key management service?
         val privateKeyAlias = "$id-private-key"
@@ -713,7 +708,7 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
         if (!keyStore.containsAlias(privateKeyAlias)) {
             singleName ?: throw IllegalArgumentException(
                     "Unable to find in the key store the identity of the distributed notary ($id) the node is part of")
-            // TODO: Remove use of [ServiceIdentityGenerator.generateToDisk].
+            // TODO: Remove use of [IdentityGenerator.generateToDisk].
             log.info("$privateKeyAlias not found in key store ${configuration.nodeKeystore}, generating fresh key!")
             keyStore.signAndSaveNewKeyPair(singleName, privateKeyAlias, generateKeyPair())
         }
