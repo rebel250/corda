@@ -102,7 +102,8 @@ class DriverDSLImpl(
     private val countObservables = mutableMapOf<CordaX500Name, Observable<Int>>()
     private lateinit var _notaries: List<NotaryHandle>
     override val notaryHandles: List<NotaryHandle> get() = _notaries
-    private var networkParameters: NetworkParametersCopier? = null
+    private var networkParametersCopier: NetworkParametersCopier? = null
+    lateinit var networkParameters: NetworkParameters
 
     class State {
         val processes = ArrayList<Process>()
@@ -285,7 +286,8 @@ class DriverDSLImpl(
             notaryInfos += NotaryInfo(identity, type.validating)
         }
 
-        networkParameters = NetworkParametersCopier(testNetworkParameters(notaryInfos))
+        networkParameters = testNetworkParameters(notaryInfos)
+        networkParametersCopier = NetworkParametersCopier(networkParameters)
 
         return cordforms.map {
             val startedNode = startCordformNode(it)
@@ -354,7 +356,8 @@ class DriverDSLImpl(
         }
         val notaryInfos = generateNotaryIdentities()
         // The network parameters must be serialised before starting any of the nodes
-        networkParameters = NetworkParametersCopier(testNetworkParameters(notaryInfos))
+        networkParameters = testNetworkParameters(notaryInfos)
+        networkParametersCopier = NetworkParametersCopier(networkParameters)
         val nodeHandles = startNotaries()
         _notaries = notaryInfos.zip(nodeHandles) { (identity, validating), nodes -> NotaryHandle(identity, validating, nodes) }
     }
@@ -519,7 +522,7 @@ class DriverDSLImpl(
         val configuration = config.parseAsNodeConfiguration()
         val baseDirectory = configuration.baseDirectory.createDirectories()
         nodeInfoFilesCopier?.addConfig(baseDirectory)
-        networkParameters!!.install(baseDirectory)
+        networkParametersCopier!!.install(baseDirectory)
         val onNodeExit: () -> Unit = {
             nodeInfoFilesCopier?.removeConfig(baseDirectory)
             countObservables.remove(configuration.myLegalName)

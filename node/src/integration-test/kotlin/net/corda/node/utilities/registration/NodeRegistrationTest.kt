@@ -3,10 +3,15 @@ package net.corda.node.utilities.registration
 import net.corda.core.crypto.Crypto
 import net.corda.core.identity.CordaX500Name
 import net.corda.core.internal.cert
+import net.corda.core.internal.concurrent.transpose
 import net.corda.core.internal.toX509CertHolder
+import net.corda.core.messaging.startFlow
 import net.corda.core.utilities.NetworkHostAndPort
+import net.corda.core.utilities.OpaqueBytes
 import net.corda.core.utilities.getOrThrow
 import net.corda.core.utilities.minutes
+import net.corda.finance.DOLLARS
+import net.corda.finance.flows.CashIssueAndPaymentFlow
 import net.corda.nodeapi.internal.crypto.CertificateAndKeyPair
 import net.corda.nodeapi.internal.crypto.CertificateType
 import net.corda.nodeapi.internal.crypto.X509CertificateFactory
@@ -14,9 +19,11 @@ import net.corda.nodeapi.internal.crypto.X509Utilities
 import net.corda.nodeapi.internal.crypto.X509Utilities.CORDA_CLIENT_CA
 import net.corda.nodeapi.internal.crypto.X509Utilities.CORDA_INTERMEDIATE_CA
 import net.corda.nodeapi.internal.crypto.X509Utilities.CORDA_ROOT_CA
+import net.corda.testing.ROOT_CA
 import net.corda.testing.node.internal.CompatibilityZoneParams
 import net.corda.testing.driver.PortAllocation
 import net.corda.testing.node.internal.internalDriver
+import net.corda.testing.node.NotarySpec
 import net.corda.testing.node.network.NetworkMapServer
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -40,14 +47,13 @@ import javax.ws.rs.core.Response
 class NodeRegistrationTest {
     private val portAllocation = PortAllocation.Incremental(13000)
     private val rootCertAndKeyPair = createSelfKeyAndSelfSignedCertificate()
-    private val registrationHandler = RegistrationHandler(rootCertAndKeyPair)
-
+    private val registrationHandler = RegistrationHandler(ROOT_CA)
     private lateinit var server: NetworkMapServer
     private lateinit var serverHostAndPort: NetworkHostAndPort
 
     @Before
     fun startServer() {
-        server = NetworkMapServer(1.minutes, portAllocation.nextHostAndPort(), registrationHandler)
+        server = NetworkMapServer(1.minutes, portAllocation.nextHostAndPort(), ROOT_CA, registrationHandler)
         serverHostAndPort = server.start()
     }
 
@@ -56,18 +62,36 @@ class NodeRegistrationTest {
         server.close()
     }
 
-    // TODO Ideally this test should be checking that two nodes that register are able to transact with each other. However
-    // starting a second node hangs so that needs to be fixed.
     @Test
     fun `node registration correct root cert`() {
-        val compatibilityZone = CompatibilityZoneParams(URL("http://$serverHostAndPort"), rootCert = rootCertAndKeyPair.certificate.cert)
+        val compatibilityZone = CompatibilityZoneParams(URL("http://$serverHostAndPort"), rootCert = ROOT_CA.certificate.cert)
         internalDriver(
                 portAllocation = portAllocation,
-                notarySpecs = emptyList(),
-                compatibilityZone = compatibilityZone
+                compatibilityZone = compatibilityZone,
+                notarySpecs = listOf(NotarySpec(CordaX500Name(organisation = "NotaryService", locality = "Zurich", country = "CH"), validating = false)),
+                extraCordappPackagesToScan = listOf("net.corda.finance"),
+                startNodesInProcess = true
         ) {
-            startNode(providedName = CordaX500Name("Alice", "London", "GB")).getOrThrow()
-            assertThat(registrationHandler.idsPolled).contains("Alice")
+            val ALICE_NAME = "Alice"
+            val GENEVIEVE_NAME = "Genevieve"
+            val nodesFutures = listOf(startNode(providedName = CordaX500Name(ALICE_NAME, "London", "GB")),
+                    startNode(providedName = CordaX500Name(GENEVIEVE_NAME, "London", "GB")),
+                            defaultNotaryNode)
+            val (alice, genevieve, notary) = nodesFutures.transpose().get()
+
+            check (notary.nodeInfo in alice.rpc.networkMapSnapshot())
+            check (notary.nodeInfo in genevieve.rpc.networkMapSnapshot())
+
+            assertThat(registrationHandler.idsPolled).contains(ALICE_NAME, GENEVIEVE_NAME, "NotaryService")
+
+            // Check we nodes communicate among themselves (and the notary).
+            val anonymous = true
+            genevieve.rpc.startFlow(::CashIssueAndPaymentFlow, 1000.DOLLARS, OpaqueBytes.of(12),
+                    alice.nodeInfo.legalIdentities.first(),
+                    anonymous,
+                    notary.nodeInfo.legalIdentities.first())
+                    .returnValue
+                    .getOrThrow()
         }
     }
 

@@ -4,6 +4,7 @@ import net.corda.core.node.NodeInfo
 import net.corda.core.utilities.seconds
 import net.corda.testing.node.internal.CompatibilityZoneParams
 import net.corda.testing.ALICE_NAME
+import net.corda.testing.ROOT_CA
 import net.corda.testing.BOB_NAME
 import net.corda.testing.driver.NodeHandle
 import net.corda.testing.driver.PortAllocation
@@ -24,7 +25,7 @@ class NetworkMapTest {
 
     @Before
     fun start() {
-        networkMapServer = NetworkMapServer(cacheTimeout, portAllocation.nextHostAndPort())
+        networkMapServer = NetworkMapServer(cacheTimeout, portAllocation.nextHostAndPort(), ROOT_CA)
         val address = networkMapServer.start()
         compatibilityZone = CompatibilityZoneParams(URL("http://$address"))
     }
