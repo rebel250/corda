@@ -28,7 +28,7 @@ object TestNodeInfoFactory {
         val clientKeyPair = Crypto.generateKeyPair(X509Utilities.DEFAULT_TLS_SIGNATURE_SCHEME)
         val keyPair = Crypto.generateKeyPair(X509Utilities.DEFAULT_TLS_SIGNATURE_SCHEME)
         val clientCert = X509Utilities.createCertificate(CertificateType.NODE_CA, intermediateCACert, intermediateCAKey, CordaX500Name(organisation = organisation, locality = "London", country = "GB"), clientKeyPair.public)
-        val identityCert = X509Utilities.createCertificate(CertificateType.WELL_KNOWN_IDENTITY, clientCert, clientKeyPair, CordaX500Name(organisation = organisation, locality = "London", country = "GB"), keyPair.public)
+        val identityCert = X509Utilities.createCertificate(CertificateType.WELL_KNOWN_LEGAL_IDENTITY, clientCert, clientKeyPair, CordaX500Name(organisation = organisation, locality = "London", country = "GB"), keyPair.public)
         val certPath = buildCertPath(identityCert.toX509Certificate(), clientCert.toX509Certificate(), intermediateCACert.toX509Certificate(), rootCACert.toX509Certificate())
         val nodeInfo = NodeInfo(listOf(NetworkHostAndPort("my.$organisation.com", 1234)), listOf(PartyAndCertificate(certPath)), 1, serial = 1L)
         return sign(keyPair, nodeInfo)
