@@ -12,6 +12,7 @@ UNRELEASED
   until final documentation is prepared. Certificates at ``NODE_CA`` and above must only ever by issued by network
   services, the ``TLS`` and ``WELL_KNOWN_IDENTITY`` roles must be issued by the ``NODE_CA`` certificate issued by the
   Doorman, and ``CONFIDENTIAL_IDENTITY`` certificates must be issued from a ``WELL_KNOWN_IDENTITY`` certificate.
+  For a detailed specification of the extension please see https://r3-cev.atlassian.net/wiki/spaces/AWG/pages/156860572/Certificate+identity+type+extension
 
 * Support for external user credentials data source and password encryption [CORDA-827].
 
