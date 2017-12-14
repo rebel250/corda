@@ -105,7 +105,7 @@ fun getTestPartyAndCertificate(party: Party): PartyAndCertificate {
     val issuerCertificate = X509Utilities.createCertificate(CertificateType.NODE_CA, intermediate.certificate, intermediate.keyPair, nodeCaName, issuerKeyPair.public,
             nameConstraints = nameConstraints)
 
-    val certHolder = X509Utilities.createCertificate(CertificateType.WELL_KNOWN_LEGAL_IDENTITY, issuerCertificate, issuerKeyPair, party.name, party.owningKey)
+    val certHolder = X509Utilities.createCertificate(CertificateType.LEGAL_IDENTITY, issuerCertificate, issuerKeyPair, party.name, party.owningKey)
     val pathElements = listOf(certHolder, issuerCertificate, intermediate.certificate, trustRoot)
     val certPath = X509CertificateFactory().generateCertPath(pathElements.map(X509CertificateHolder::cert))
     return PartyAndCertificate(certPath)
