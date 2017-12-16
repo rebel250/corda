@@ -14,6 +14,7 @@ import net.corda.core.flows.FlowLogicRefFactory
 import net.corda.core.internal.ThreadBox
 import net.corda.core.internal.VisibleForTesting
 import net.corda.core.internal.concurrent.flatMap
+import net.corda.core.internal.join
 import net.corda.core.internal.until
 import net.corda.core.node.StateLoader
 import net.corda.core.schemas.PersistentStateRef
@@ -24,12 +25,12 @@ import net.corda.node.internal.CordaClock
 import net.corda.node.internal.MutableClock
 import net.corda.node.services.api.FlowStarter
 import net.corda.node.services.api.SchedulerService
-import net.corda.node.utilities.AffinityExecutor
+import net.corda.node.shell.InteractiveShell.database
 import net.corda.node.utilities.PersistentMap
 import net.corda.nodeapi.internal.persistence.CordaPersistence
 import net.corda.nodeapi.internal.persistence.NODE_DATABASE_PREFIX
 import org.apache.activemq.artemis.utils.ReusableLatch
-import java.time.Clock
+import org.slf4j.Logger
 import java.time.Instant
 import java.util.*
 import java.util.concurrent.*
@@ -51,23 +52,21 @@ import com.google.common.util.concurrent.SettableFuture as GuavaSettableFuture
  * is the outcome of the activity in order to schedule another activity.  Once we have implemented more persistence
  * in the nodes, maybe we can consider multiple activities and whether the activities have been completed or not,
  * but that starts to sound a lot like off-ledger state.
- *
- * @param schedulerTimerExecutor The executor the scheduler blocks on waiting for the clock to advance to the next
- * activity.  Only replace this for unit testing purposes.  This is not the executor the [FlowLogic] is launched on.
  */
 @ThreadSafe
 class NodeSchedulerService(private val clock: CordaClock,
                            private val database: CordaPersistence,
                            private val flowStarter: FlowStarter,
                            private val stateLoader: StateLoader,
-                           private val schedulerTimerExecutor: Executor = Executors.newSingleThreadExecutor(),
                            private val unfinishedSchedules: ReusableLatch = ReusableLatch(),
-                           private val serverThread: AffinityExecutor,
-                           private val flowLogicRefFactory: FlowLogicRefFactory)
+                           private val serverThread: Executor,
+                           private val flowLogicRefFactory: FlowLogicRefFactory,
+                           private val log: Logger = staticLog,
+                           scheduledStates: MutableMap<StateRef, ScheduledStateRef> = createMap())
     : SchedulerService, SingletonSerializeAsToken() {
 
     companion object {
-        private val log = contextLogger()
+        private val staticLog = contextLogger()
         /**
          * Wait until the given [Future] is complete or the deadline is reached, with support for [MutableClock] implementations
          * used in demos or testing.  This will substitute a Fiber compatible Future so the current
@@ -152,20 +151,16 @@ class NodeSchedulerService(private val clock: CordaClock,
             var scheduledAt: Instant = Instant.now()
     )
 
-    private class InnerState {
-        var scheduledStates = createMap()
-
-        var scheduledStatesQueue: PriorityQueue<ScheduledStateRef> = PriorityQueue({ a, b -> a.scheduledAt.compareTo(b.scheduledAt) })
-
+    private class InnerState(var scheduledStates: MutableMap<StateRef, ScheduledStateRef>) {
+        val scheduledStatesQueue: PriorityQueue<ScheduledStateRef> = PriorityQueue { a, b -> a.scheduledAt.compareTo(b.scheduledAt) }
         var rescheduled: GuavaSettableFuture<Boolean>? = null
     }
 
-    private val mutex = ThreadBox(InnerState())
-
+    private val mutex = ThreadBox(InnerState(scheduledStates))
     // We need the [StateMachineManager] to be constructed before this is called in case it schedules a flow.
     fun start() {
         mutex.locked {
-            scheduledStatesQueue.addAll(scheduledStates.all().map { it.second }.toMutableList())
+            scheduledStatesQueue.addAll(scheduledStates.values)
             rescheduleWakeUp()
         }
     }
@@ -206,6 +201,7 @@ class NodeSchedulerService(private val clock: CordaClock,
         }
     }
 
+    private val schedulerTimerExecutor = Executors.newSingleThreadExecutor()
     /**
      * This method first cancels the [java.util.concurrent.Future] for any pending action so that the
      * [awaitWithDeadline] used below drops through without running the action.  We then create a new
@@ -300,5 +296,9 @@ class NodeSchedulerService(private val clock: CordaClock,
             log.error("Attempt to run scheduled state $scheduledState resulted in error.", e)
             null
         }
+    }
+
+    fun dispose() {
+        schedulerTimerExecutor.join()
     }
 }
